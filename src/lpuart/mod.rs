@@ -1,12 +1,12 @@
 use crate::dma::{self, AnyChannel, Channel, Destination, Source};
 use crate::interrupt::typelevel::{Binding, Interrupt};
-use crate::{interrupt, pac, peripherals, Peripheral};
+use crate::{interrupt, pac, peripherals, Peri, PeripheralType};
 use core::future::poll_fn;
 use core::marker::PhantomData;
 use core::sync::atomic::{compiler_fence, Ordering};
 use core::task::Poll;
 use embassy_futures::{select::select, select::Either};
-use embassy_hal_internal::{into_ref, PeripheralRef};
+// Peri is already imported from crate
 use pac::ccm::vals::UartClkPodf;
 use pac::lpuart::regs::{Baud, Data};
 use pac::lpuart::vals::{Idlecfg, Rxfifosize, Txfifosize};
@@ -114,7 +114,7 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
 }
 
 pub struct LpuartTx<'d, T: Instance> {
-    tx_dma: Option<PeripheralRef<'d, AnyChannel>>,
+    tx_dma: Option<Peri<'d, AnyChannel>>,
     _phantom: &'d PhantomData<T>,
 }
 
@@ -252,7 +252,7 @@ impl<'d, W: dma::Word, T: Instance> dma::Destination<W> for LpuartTx<'d, T> {
 }
 
 pub struct LpuartRx<'d, T: Instance> {
-    rx_dma: Option<PeripheralRef<'d, AnyChannel>>,
+    rx_dma: Option<Peri<'d, AnyChannel>>,
     _phantom: &'d PhantomData<T>,
 }
 
@@ -471,28 +471,21 @@ pub struct Lpuart<'d, T: Instance> {
 
 impl<'d, T: Instance> Lpuart<'d, T> {
     pub fn new(
-        peri: impl Peripheral<P = T> + 'd,
-        rx: impl Peripheral<P = impl RxPin<T>> + 'd,
-        tx: impl Peripheral<P = impl TxPin<T>> + 'd,
-        rx_dma: impl Peripheral<P = impl crate::dma::Channel> + 'd,
-        tx_dma: impl Peripheral<P = impl crate::dma::Channel> + 'd,
+        peri: Peri<'d, T>,
+        rx: Peri<'d, impl RxPin<T>>,
+        tx: Peri<'d, impl TxPin<T>>,
+        rx_dma: Peri<'d, impl crate::dma::Channel>,
+        tx_dma: Peri<'d, impl crate::dma::Channel>,
     ) -> Self {
-        into_ref!(rx_dma, tx_dma);
-        Self::new_inner(
-            peri,
-            rx,
-            tx,
-            Some(rx_dma.map_into()),
-            Some(tx_dma.map_into()),
-        )
+        Self::new_inner(peri, rx, tx, Some(rx_dma.into()), Some(tx_dma.into()))
     }
 
     fn new_inner(
-        peri: impl Peripheral<P = T> + 'd,
-        rx: impl Peripheral<P = impl RxPin<T>> + 'd,
-        tx: impl Peripheral<P = impl TxPin<T>> + 'd,
-        rx_dma: Option<PeripheralRef<'d, AnyChannel>>,
-        tx_dma: Option<PeripheralRef<'d, AnyChannel>>,
+        peri: Peri<'d, T>,
+        rx: Peri<'d, impl RxPin<T>>,
+        tx: Peri<'d, impl TxPin<T>>,
+        rx_dma: Option<Peri<'d, AnyChannel>>,
+        tx_dma: Option<Peri<'d, AnyChannel>>,
     ) -> Self {
         let mut res = Self {
             tx: LpuartTx {
@@ -733,7 +726,7 @@ impl<'d, T: Instance + 'd> embedded_io_async::Write for Lpuart<'d, T> {
 
 impl<'d, T: Instance + 'd> embedded_io_async::Write for LpuartTx<'d, T> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
-        Self::write(self, buf).await;
+        Self::write(self, buf).await?;
         Ok(buf.len())
     }
 }
@@ -810,7 +803,7 @@ mod sealed {
 
 pub trait Mode: sealed::Mode {}
 
-pub trait Instance: Peripheral<P = Self> + sealed::Instance + 'static + Send {}
+pub trait Instance: PeripheralType + sealed::Instance + 'static + Send {}
 
 macro_rules! impl_mode {
     ($name:ident) => {
@@ -858,8 +851,8 @@ impl_instance!(LPUART4, LPUART4, 4, 68, 69);
 //impl_instance!(LPUART7, LPUART7, 7, 8, 9);
 //impl_instance!(LPUART8, LPUART8, 8, 72, 73);
 
-pub trait TxPin<T: Instance>: sealed::TxPin<T> {}
-pub trait RxPin<T: Instance>: sealed::RxPin<T> {}
+pub trait TxPin<T: Instance>: PeripheralType + sealed::TxPin<T> {}
+pub trait RxPin<T: Instance>: PeripheralType + sealed::RxPin<T> {}
 pub trait CtsPin<T: Instance>: sealed::CtsPin<T> {}
 pub trait RtsPin<T: Instance>: sealed::RtsPin<T> {}
 

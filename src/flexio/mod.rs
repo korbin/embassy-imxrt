@@ -1,6 +1,6 @@
 use crate::{
     dma::{self, Channel, Transfer, Word},
-    interrupt, pac, peripherals, Peripheral,
+    interrupt, pac, peripherals, Peri,
 };
 use bitvec::prelude::*;
 use core::sync::atomic::{compiler_fence, Ordering};
@@ -216,7 +216,7 @@ impl<'d, T: Instance> Shifter<'d, T> {
         compiler_fence(Ordering::SeqCst);
     }
 
-    pub async fn write_dma<C: Channel, W: Word>(&mut self, buffer: &[W], tx_dma: &mut C) {
+    pub async fn write_dma<C: Channel, W: Word>(&mut self, buffer: &[W], tx_dma: Peri<'_, C>) {
         compiler_fence(Ordering::SeqCst);
         unsafe { crate::dma::write(tx_dma, buffer, self).await }
         compiler_fence(Ordering::SeqCst);
@@ -225,7 +225,7 @@ impl<'d, T: Instance> Shifter<'d, T> {
     pub fn setup_dma<'a, C: Channel>(
         &mut self,
         buffer: &[u32],
-        tx_dma: &'a mut C,
+        tx_dma: Peri<'a, C>,
     ) -> Transfer<'a, C> {
         unsafe { crate::dma::write(tx_dma, buffer, self) }
     }

@@ -2,11 +2,11 @@ use crate::dma::AnyChannel;
 use crate::dma::Channel;
 use crate::interrupt::typelevel::{Binding, Interrupt};
 use crate::interrupt::{LPSPI1, LPSPI2};
-use crate::{interrupt, pac, peripherals, Peripheral};
+use crate::{interrupt, pac, peripherals, Peri};
 use core::future;
 use core::marker::PhantomData;
 use core::task::Poll;
-use embassy_hal_internal::{into_ref, PeripheralRef};
+// Peri is already imported from crate
 use embassy_sync::waitqueue::AtomicWaker;
 pub use embedded_hal_02::spi::{Phase, Polarity};
 use pac::lpspi::vals::*;
@@ -57,24 +57,23 @@ pub enum SamplePoint {
 }
 
 pub struct Lpspi<'d, T: Instance, M: Mode> {
-    inner: PeripheralRef<'d, T>,
+    inner: Peri<'d, T>,
     phantom: PhantomData<(&'d mut T, M)>,
 
-    tx_dma: Option<PeripheralRef<'d, AnyChannel>>,
-    rx_dma: Option<PeripheralRef<'d, AnyChannel>>,
+    tx_dma: Option<Peri<'d, AnyChannel>>,
+    rx_dma: Option<Peri<'d, AnyChannel>>,
 }
 
 impl<'d, T: Instance, M: Mode> Lpspi<'d, T, M> {
     fn new_inner(
-        inner: impl Peripheral<P = T> + 'd,
-        clk: Option<PeripheralRef<'d, impl ClkPin<T> + 'd>>,
-        mosi: Option<PeripheralRef<'d, impl MosiPin<T> + 'd>>,
-        miso: Option<PeripheralRef<'d, impl MisoPin<T> + 'd>>,
-        cs: Option<PeripheralRef<'d, impl CsPin<T> + 'd>>,
-        tx_dma: Option<PeripheralRef<'d, AnyChannel>>,
-        rx_dma: Option<PeripheralRef<'d, AnyChannel>>,
+        inner: Peri<'d, T>,
+        clk: Option<Peri<'d, impl ClkPin<T> + 'd>>,
+        mosi: Option<Peri<'d, impl MosiPin<T> + 'd>>,
+        miso: Option<Peri<'d, impl MisoPin<T> + 'd>>,
+        cs: Option<Peri<'d, impl CsPin<T> + 'd>>,
+        tx_dma: Option<Peri<'d, AnyChannel>>,
+        rx_dma: Option<Peri<'d, AnyChannel>>,
     ) -> Self {
-        into_ref!(inner);
 
         //    let p = inner.regs();
         //    let (presc, postdiv) = calc_prescs(config.frequency);
@@ -312,23 +311,23 @@ impl<'d, T: Instance, M: Mode> Lpspi<'d, T, M> {
 impl<'d, T: Instance> Lpspi<'d, T, Async> {
     /// Create an SPI driver in async mode supporting DMA operations.
     pub fn new(
-        inner: impl Peripheral<P = T> + 'd,
-        clk: impl Peripheral<P = impl ClkPin<T> + 'd> + 'd,
-        mosi: impl Peripheral<P = impl MosiPin<T> + 'd> + 'd,
-        miso: impl Peripheral<P = impl MisoPin<T> + 'd> + 'd,
-        tx_dma: impl Peripheral<P = impl Channel> + 'd,
-        rx_dma: impl Peripheral<P = impl Channel> + 'd,
+        inner: Peri<'d, T>,
+        clk: Peri<'d, impl ClkPin<T> + 'd>,
+        mosi: Peri<'d, impl MosiPin<T> + 'd>,
+        miso: Peri<'d, impl MisoPin<T> + 'd>,
+        tx_dma: Peri<'d, impl Channel>,
+        rx_dma: Peri<'d, impl Channel>,
         //config: Config,
     ) -> Self {
-        into_ref!(tx_dma, rx_dma, clk, mosi, miso);
+        // Pins are already Peri types
         Self::new_inner(
             inner,
-            Some(clk.map_into()),
-            Some(mosi.map_into()),
-            Some(miso.map_into()),
+            Some(clk.into()),
+            Some(mosi.into()),
+            Some(miso.into()),
             None,
-            Some(tx_dma.map_into()),
-            Some(rx_dma.map_into()),
+            Some(tx_dma.into()),
+            Some(rx_dma.into()),
             //config,
         )
     }
@@ -341,14 +340,14 @@ impl<'d, T: Instance> Lpspi<'d, T, Async> {
         tx_dma: impl Peripheral<P = impl Channel> + 'd,
         //config: Config,
     ) -> Self {
-        into_ref!(tx_dma, clk, mosi);
+        // Pins are already Peri types
         Self::new_inner(
             inner,
-            Some(clk.map_into()),
-            Some(mosi.map_into()),
+            Some(clk.into()),
+            Some(mosi.into()),
             None,
             None,
-            Some(tx_dma.map_into()),
+            Some(tx_dma.into()),
             None,
             //config,
         )
@@ -362,15 +361,15 @@ impl<'d, T: Instance> Lpspi<'d, T, Async> {
         rx_dma: impl Peripheral<P = impl Channel> + 'd,
         //config: Config,
     ) -> Self {
-        into_ref!(rx_dma, clk, miso);
+        // Pins are already Peri types
         Self::new_inner(
             inner,
-            Some(clk.map_into()),
+            Some(clk.into()),
             None,
-            Some(miso.map_into()),
+            Some(miso.into()),
             None,
             None,
-            Some(rx_dma.map_into()),
+            Some(rx_dma.into()),
             //config,
         )
     }
@@ -514,7 +513,7 @@ impl<'d, T: Instance> Lpspi<'d, T, Blocking> {
         miso: impl Peripheral<P = impl MisoPin<T> + 'd> + 'd,
         //config: Config,
     ) -> Self {
-        into_ref!(clk, mosi, miso);
+        // Pins are already Peri types
         Self::new_inner(
             inner,
             Some(clk),
@@ -534,7 +533,7 @@ impl<'d, T: Instance> Lpspi<'d, T, Blocking> {
         mosi: impl Peripheral<P = impl MosiPin<T> + 'd> + 'd,
         //config: Config,
     ) -> Self {
-        into_ref!(clk, mosi);
+        // Pins are already Peri types
         Self::new_inner(
             inner,
             Some(clk),
@@ -554,7 +553,7 @@ impl<'d, T: Instance> Lpspi<'d, T, Blocking> {
         miso: impl Peripheral<P = impl MisoPin<T> + 'd> + 'd,
         //config: Config,
     ) -> Self {
-        into_ref!(clk, miso);
+        // Pins are already Peri types
 
         Self::new_inner(
             inner,

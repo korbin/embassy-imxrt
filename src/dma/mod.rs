@@ -1,9 +1,10 @@
 use crate::interrupt::typelevel::Interrupt;
 use crate::interrupt::InterruptExt;
-use crate::{interrupt, into_ref, pac, peripherals, Peripheral, PeripheralRef};
+use crate::{interrupt, pac, peripherals, Peri, PeripheralType};
 use core::future::Future;
 use core::mem::size_of;
 use core::pin::Pin;
+use core::sync::atomic::{fence, Ordering};
 use core::task::{Context, Poll};
 use embassy_hal_internal::impl_peripheral;
 use embassy_sync::waitqueue::AtomicWaker;
@@ -72,9 +73,7 @@ pub fn init() {
     }
 }
 
-pub trait Channel:
-    Peripheral<P = Self> + sealed::Channel + Into<AnyChannel> + Sized + 'static
-{
+pub trait Channel: PeripheralType + sealed::Channel + Into<AnyChannel> + Sized + 'static {
     fn number(&self) -> u8;
 
     fn tcd(&self) -> pac::dma::Tcd;
@@ -184,11 +183,13 @@ pub trait Channel:
         self.set_interrupt_on_error();
         self.set_interrupt_on_completion(true);
 
+        fence(Ordering::SeqCst);
+
         let serq = pac::DMA0.serq().as_ptr() as *mut u8;
         unsafe { serq.write_volatile(self.number()) };
     }
 
-    fn reset(&mut self) {
+    fn reset(&self) {
         use pac::dma::regs::*;
         self.tcd().saddr().write_value(0);
         self.tcd().daddr().write_value(0);
@@ -220,7 +221,7 @@ pub trait Channel:
         pac::DMA0.cint().write(|x| x.set_cint(self.number()));
     }
 
-    fn set_disable_on_completion(&mut self, dreq: bool) {
+    fn set_disable_on_completion(&self, dreq: bool) {
         self.tcd().csr().modify(|csr| {
             csr.set_dreq(dreq);
         })
@@ -265,13 +266,15 @@ pub trait Channel:
         let ssrt = pac::DMA0.ssrt().as_ptr() as *mut u8;
 
         unsafe { ssrt.write_volatile(self.number()) };
+
+        fence(Ordering::SeqCst);
     }
 
     fn set_minor_loop_bytes(&self, nbytes: u32) {
         self.tcd().nbytes_mlno().write_value(nbytes);
     }
 
-    fn set_transfer_iterations(&mut self, iterations: u16) {
+    fn set_transfer_iterations(&self, iterations: u16) {
         let tcd = self.tcd();
 
         unsafe {
@@ -283,7 +286,7 @@ pub trait Channel:
         }
     }
 
-    fn set_configuration(&mut self, configuration: Configuration) {
+    fn set_configuration(&self, configuration: Configuration) {
         let chcfg = pac::DMAMUX.chcfg(self.number() as usize);
         match configuration {
             Configuration::Off => chcfg.write_value(Chcfg(0)),
@@ -360,14 +363,12 @@ macro_rules! channel {
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct Transfer<'a, C: Channel> {
-    pub channel: PeripheralRef<'a, C>,
+    pub channel: Peri<'a, C>,
     pub software: bool,
 }
 
 impl<'a, C: Channel> Transfer<'a, C> {
-    pub(crate) fn new(channel: impl Peripheral<P = C> + 'a) -> Self {
-        into_ref!(channel);
-
+    pub(crate) fn new(channel: Peri<'a, C>) -> Self {
         Self {
             channel,
             software: false,
@@ -393,6 +394,7 @@ impl<'a, C: Channel> Future for Transfer<'a, C> {
         }
 
         if self.channel.is_complete() {
+            fence(Ordering::SeqCst);
             self.channel.clear_complete();
             return Poll::Ready(());
         }
@@ -415,6 +417,7 @@ impl<'a, C: Channel> Future for Transfer<'a, C> {
 impl<'a, C: Channel> Drop for Transfer<'a, C> {
     fn drop(&mut self) {
         self.channel.disable();
+        fence(Ordering::SeqCst);
         self.channel.clear_complete();
         self.channel.clear_error();
     }
@@ -441,12 +444,10 @@ fn DMA_ERROR() {
 }
 
 pub unsafe fn write<'a, C: Channel, D: Destination<W>, W: Word>(
-    ch: impl Peripheral<P = C> + 'a,
+    ch: Peri<'a, C>,
     buffer: &[W],
     destination: &mut D,
 ) -> Transfer<'a, C> {
-    into_ref!(ch);
-
     ch.disable();
     ch.set_disable_on_completion(true);
 
@@ -462,6 +463,8 @@ pub unsafe fn write<'a, C: Channel, D: Destination<W>, W: Word>(
     ch.set_minor_loop_bytes(core::mem::size_of::<W>() as u32);
     ch.set_transfer_iterations(buffer.len() as u16);
 
+    fence(Ordering::SeqCst);
+
     destination.enable_destination();
 
     Transfer {
@@ -471,12 +474,10 @@ pub unsafe fn write<'a, C: Channel, D: Destination<W>, W: Word>(
 }
 
 pub unsafe fn copy<'a, C: Channel, W: Word>(
-    ch: impl Peripheral<P = C> + 'a,
+    ch: Peri<'a, C>,
     from: &[W],
     to: &mut [W],
 ) -> Transfer<'a, C> {
-    into_ref!(ch);
-
     ch.disable();
     ch.set_disable_on_completion(true);
 
@@ -490,6 +491,8 @@ pub unsafe fn copy<'a, C: Channel, W: Word>(
     );
     ch.set_transfer_iterations(1);
 
+    fence(Ordering::SeqCst);
+
     Transfer {
         channel: ch,
         software: true,
@@ -497,7 +500,7 @@ pub unsafe fn copy<'a, C: Channel, W: Word>(
 }
 
 //pub unsafe fn pipe<'a, C: Channel, S: Source<W>, D: Destination<W>, W: Word>(
-//    ch: impl Peripheral<P = C> + 'a,
+//    ch: Peri<'a, C>,
 //    source: &S,
 //    destination: &mut D,
 //    len: usize,
@@ -549,12 +552,10 @@ pub unsafe fn copy<'a, C: Channel, W: Word>(
 //}
 
 pub unsafe fn read<'a, C: Channel, S: Source<W>, W: Word>(
-    ch: impl Peripheral<P = C> + 'a,
+    ch: Peri<'a, C>,
     source: &mut S,
     buffer: &mut [W],
 ) -> Transfer<'a, C> {
-    into_ref!(ch);
-
     ch.disable();
     ch.set_disable_on_completion(true);
 
@@ -571,6 +572,8 @@ pub unsafe fn read<'a, C: Channel, S: Source<W>, W: Word>(
         ch.set_transfer_iterations(buffer.len() as u16);
     }
 
+    fence(Ordering::SeqCst);
+
     source.enable_source();
 
     Transfer {
@@ -579,10 +582,7 @@ pub unsafe fn read<'a, C: Channel, S: Source<W>, W: Word>(
     }
 }
 
-pub unsafe fn set_source_linear_buffer<'a, C: Channel, W: Word>(
-    chan: &PeripheralRef<'a, C>,
-    source: &[W],
-) {
+pub unsafe fn set_source_linear_buffer<'a, C: Channel, W: Word>(chan: &Peri<'a, C>, source: &[W]) {
     chan.set_source_address(source.as_ptr());
     chan.set_source_offset(core::mem::size_of::<W>() as i16);
     chan.set_source_attributes::<W>(0);
@@ -598,7 +598,7 @@ mod sealed {
 }
 
 pub unsafe fn set_destination_linear_buffer<'a, C: Channel, W: Word>(
-    chan: &PeripheralRef<'a, C>,
+    chan: &Peri<'a, C>,
     destination: &mut [W],
 ) {
     chan.set_destination_address(destination.as_ptr());
@@ -647,7 +647,7 @@ pub fn circular_buffer_modulo<W>(buffer: &[W]) -> u32 {
 /// - the capacity is not a power of two
 /// - the alignment is not a multiple of the buffer's size in bytes
 pub unsafe fn set_source_circular_buffer<'a, C: Channel, W: Word>(
-    chan: &PeripheralRef<'a, C>,
+    chan: &Peri<'a, C>,
     source: &[W],
 ) {
     circular_buffer_asserts(source);
@@ -677,7 +677,7 @@ pub unsafe fn set_source_circular_buffer<'a, C: Channel, W: Word>(
 /// - the alignment is not a multiple of the buffer's size in bytes
 
 pub unsafe fn set_destination_circular_buffer<'a, C: Channel, W: Word>(
-    chan: &PeripheralRef<'a, C>,
+    chan: &Peri<'a, C>,
     destination: &mut [W],
 ) {
     circular_buffer_asserts(destination);

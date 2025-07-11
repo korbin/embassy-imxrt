@@ -1,10 +1,10 @@
 use crate::interrupt::typelevel::{Binding, Interrupt};
 use crate::interrupt::{LPI2C1, LPI2C2};
-use crate::{interrupt, pac, peripherals, Peripheral};
+use crate::{interrupt, pac, peripherals, Peri, PeripheralType};
 use core::future;
 use core::marker::PhantomData;
 use core::task::Poll;
-use embassy_hal_internal::{into_ref, PeripheralRef};
+// Peri is already imported from crate
 use embassy_sync::waitqueue::AtomicWaker;
 use pac::lpi2c::vals::*;
 
@@ -73,9 +73,9 @@ pub struct Lpi2c<'d, T: Instance, M: Mode> {
 
 impl<'d, T: Instance + 'd> Lpi2c<'d, T, Async> {
     pub fn new_async(
-        peri: impl Peripheral<P = T> + 'd,
-        scl: impl Peripheral<P = impl SclPin<T>> + 'd,
-        sda: impl Peripheral<P = impl SdaPin<T>> + 'd,
+        peri: Peri<'d, T>,
+        scl: Peri<'d, impl SclPin<T>>,
+        sda: Peri<'d, impl SdaPin<T>>,
         config: Config,
     ) -> Self {
         let i2c = Self::new_inner(peri, scl, sda, config);
@@ -326,12 +326,12 @@ impl<'d, T: Instance + 'd> Lpi2c<'d, T, Async> {
 
 impl<'d, T: Instance + 'd, M: Mode> Lpi2c<'d, T, M> {
     fn new_inner(
-        peri: impl Peripheral<P = T> + 'd,
-        _scl: impl Peripheral<P = impl SclPin<T>> + 'd,
-        _sda: impl Peripheral<P = impl SdaPin<T>> + 'd,
+        peri: Peri<'d, T>,
+        _scl: Peri<'d, impl SclPin<T>>,
+        _sda: Peri<'d, impl SdaPin<T>>,
         _config: Config,
     ) -> Self {
-        into_ref!(peri);
+        // peri is already a Peri<'d, T>
 
         pac::CCM.ccgr2().modify(|r| {
             r.set_cg3(0b11);
@@ -602,7 +602,7 @@ impl<'d, T: Instance + 'd, M: Mode> Lpi2c<'d, T, M> {
         Ok(())
     }
 
-    fn blocking_stop(&mut self) -> Result<(), Error> {
+    pub fn blocking_stop(&mut self) -> Result<(), Error> {
         self.blocking_wait_for_transmit()?;
 
         T::regs().mtdr().write(|v| {
@@ -966,7 +966,7 @@ mod sealed {
 
 pub trait Mode: sealed::Mode {}
 
-pub trait Instance: sealed::Instance {}
+pub trait Instance: PeripheralType + sealed::Instance {}
 
 macro_rules! impl_instance {
     ($type:ident, $irq:ident) => {
@@ -1012,8 +1012,8 @@ pub struct Async;
 impl_mode!(Blocking);
 impl_mode!(Async);
 
-pub trait SdaPin<T: Instance>: sealed::SdaPin<T> {}
-pub trait SclPin<T: Instance>: sealed::SclPin<T> {}
+pub trait SdaPin<T: Instance>: PeripheralType + sealed::SdaPin<T> {}
+pub trait SclPin<T: Instance>: PeripheralType + sealed::SclPin<T> {}
 
 macro_rules! impl_pin {
     ($pin:ident, $instance:ident, $function:ident) => {

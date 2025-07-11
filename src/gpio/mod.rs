@@ -1,11 +1,11 @@
 use crate::interrupt::typelevel::{Binding, Interrupt};
-use crate::{interrupt, pac, peripherals, Peripheral};
+use crate::{interrupt, pac, peripherals, Peri, PeripheralType};
 use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin as FuturePin;
 use core::task::{Context, Poll};
+use embassy_hal_internal::impl_peripheral;
 use embassy_hal_internal::interrupt::InterruptExt;
-use embassy_hal_internal::{impl_peripheral, into_ref, PeripheralRef};
 use embassy_sync::waitqueue::AtomicWaker;
 use pac::iomuxc::regs::GpioCtl;
 use pac::{common::*, IOMUXC};
@@ -70,14 +70,12 @@ impl From<Level> for bool {
 }
 
 pub struct Flex<'d, T: Pin> {
-    pub(crate) pin: PeripheralRef<'d, T>,
+    pub(crate) pin: Peri<'d, T>,
 }
 
 impl<'d, T: Pin> Flex<'d, T> {
     #[inline]
-    pub fn new(pin: impl Peripheral<P = T> + 'd) -> Self {
-        into_ref!(pin);
-
+    pub fn new(pin: Peri<'d, T>) -> Self {
         use crate::pac::gpio::Gpio;
         let gpio: Gpio = pin.gpio();
         gpio.imr().modify(|r| *r &= !pin.bit());
@@ -246,27 +244,27 @@ impl<'d, T: Pin> Flex<'d, T> {
 
     #[inline]
     pub async fn wait_for_high(&mut self) {
-        InputFuture::new(&mut self.pin, InterruptTrigger::LevelHigh).await;
+        InputFuture::new(self.pin.reborrow(), InterruptTrigger::LevelHigh).await;
     }
 
     #[inline]
     pub async fn wait_for_low(&mut self) {
-        InputFuture::new(&mut self.pin, InterruptTrigger::LevelLow).await;
+        InputFuture::new(self.pin.reborrow(), InterruptTrigger::LevelLow).await;
     }
 
     #[inline]
     pub async fn wait_for_rising_edge(&mut self) {
-        InputFuture::new(&mut self.pin, InterruptTrigger::EdgeHigh).await;
+        InputFuture::new(self.pin.reborrow(), InterruptTrigger::EdgeHigh).await;
     }
 
     #[inline]
     pub async fn wait_for_falling_edge(&mut self) {
-        InputFuture::new(&mut self.pin, InterruptTrigger::EdgeLow).await;
+        InputFuture::new(self.pin.reborrow(), InterruptTrigger::EdgeLow).await;
     }
 
     #[inline]
     pub async fn wait_for_any_edge(&mut self) {
-        InputFuture::new(&mut self.pin, InterruptTrigger::AnyEdge).await;
+        InputFuture::new(self.pin.reborrow(), InterruptTrigger::AnyEdge).await;
     }
 }
 
@@ -276,7 +274,7 @@ pub struct Input<'d, T: Pin> {
 
 impl<'d, T: Pin> Input<'d, T> {
     #[inline]
-    pub fn new(pin: impl Peripheral<P = T> + 'd, pull: Pull) -> Self {
+    pub fn new(pin: Peri<'d, T>, pull: Pull) -> Self {
         let mut pin = Flex::new(pin);
         pin.set_as_input();
         pin.set_pull(pull);
@@ -331,7 +329,7 @@ pub struct Output<'d, T: Pin> {
 
 impl<'d, T: Pin> Output<'d, T> {
     #[inline]
-    pub fn new(pin: impl Peripheral<P = T> + 'd, initial_output: Level) -> Self {
+    pub fn new(pin: Peri<'d, T>, initial_output: Level) -> Self {
         let mut pin = Flex::new(pin);
         match initial_output {
             Level::High => pin.set_high(),
@@ -469,13 +467,11 @@ fn GPIO5_COMBINED_0_15() {
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 struct InputFuture<'a, T: Pin> {
-    pin: PeripheralRef<'a, T>,
+    pin: Peri<'a, T>,
 }
 
 impl<'d, T: Pin> InputFuture<'d, T> {
-    pub fn new(pin: impl Peripheral<P = T> + 'd, level: InterruptTrigger) -> Self {
-        into_ref!(pin);
-
+    pub fn new(pin: Peri<'d, T>, level: InterruptTrigger) -> Self {
         use crate::pac::gpio::Gpio;
         use pac::gpio::vals::Icr;
         let gpio: Gpio = pin.gpio();
@@ -604,7 +600,7 @@ pub(crate) mod sealed {
     }
 }
 
-pub trait Pin: Peripheral<P = Self> + sealed::Pin + Sized + 'static {}
+pub trait Pin: PeripheralType + sealed::Pin + Sized + 'static {}
 
 macro_rules! impl_pin {
     ($name:ident, $gpio:expr, $ctl:expr, $mux:expr, $waker:expr, $pin_num:expr) => {

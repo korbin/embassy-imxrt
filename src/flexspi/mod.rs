@@ -1,10 +1,9 @@
 use crate::flexspi::nor::generic;
 use crate::interrupt::typelevel::{Binding, Interrupt};
-use crate::{interrupt, pac, peripherals, Peripheral};
+use crate::{interrupt, pac, peripherals, Peri};
 use core::future;
 use core::marker::PhantomData;
 use core::task::Poll;
-use embassy_hal_internal::{into_ref, PeripheralRef};
 use embassy_sync::waitqueue::AtomicWaker;
 use embedded_io_async::Error;
 
@@ -36,12 +35,38 @@ impl<'d, T: Instance + 'd> Flexspi<'d, T> {
             r.set_mdis(true);
         });
 
-        let ccm = pac::CCM.ccgr6().read();
+        // Configure FlexSPI clock first
+        // TODO: Make clock source and divider configurable
+        // For now, assuming PLL3 PFD0 at 480MHz / 4 = 120MHz
+        unsafe {
+            // Select PLL3 PFD0 as clock source (value 3)
+            pac::CCM.cscmr1().modify(|r| {
+                r.set_flexspi_clk_sel(pac::ccm::vals::FlexspiClkSel::FLEXSPI_CLK_SEL_3);
+            });
+            // Set divider to 4 (value 3 means divide by 4)
+            pac::CCM.cscmr1().modify(|r| {
+                r.set_flexspi_podf(pac::ccm::vals::FlexspiPodf::FLEXSPI_PODF_3);
+            });
+        }
+
+        // Enable clock gate
         pac::CCM.ccgr6().modify(|r| r.set_cg5(0b11));
 
+        // Small delay after clock configuration
+        cortex_m::asm::delay(100);
+
+        // Enable module to perform reset
         p.mcr0().modify(|r| {
             r.set_mdis(false);
         });
+
+        // Software reset - this is critical for proper initialization
+        p.mcr0().modify(|r| {
+            r.set_swreset(true);
+        });
+
+        // Wait for reset to complete
+        while p.mcr0().read().swreset() {}
 
         Self { _p: &PhantomData }
     }
@@ -143,7 +168,7 @@ impl<'d, T: Instance + 'd> Flexspi<'d, T> {
     pub fn update_lut_entry(&mut self, id: u8, seq: Sequence) {
         let p = T::regs();
 
-        while !self.bus_idle() {}
+        self.blocking_wait_bus_idle();
 
         self.set_lut_lock(false);
 
@@ -163,12 +188,18 @@ impl<'d, T: Instance + 'd> Flexspi<'d, T> {
         while T::regs().mcr0().read().swreset() {}
     }
 
+    #[inline(always)]
     pub fn enable(&mut self) {
-        T::regs().mcr0().modify(|r| r.set_mdis(false));
+        let p = T::regs();
+        p.mcr0().modify(|r| r.set_mdis(false));
+        while p.mcr0().read().mdis() {}
     }
 
+    #[inline(always)]
     pub fn disable(&mut self) {
-        T::regs().mcr0().modify(|r| r.set_mdis(true));
+        let p = T::regs();
+        p.mcr0().modify(|r| r.set_mdis(true));
+        while !p.mcr0().read().mdis() {}
     }
 
     pub fn reset_fifos(&mut self, tx: bool, rx: bool) {
@@ -183,14 +214,13 @@ impl<'d, T: Instance + 'd> Flexspi<'d, T> {
         }
     }
 
-    #[inline]
     pub fn bus_idle(&self) -> bool {
         let sts = T::regs().sts0().read();
 
         sts.arbidle() && sts.seqidle()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn blocking_wait_bus_idle(&self) {
         while !self.bus_idle() {}
     }

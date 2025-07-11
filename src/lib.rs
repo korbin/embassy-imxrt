@@ -1,11 +1,8 @@
 #![no_std]
-#![feature(async_fn_in_trait)]
 #![feature(trait_alias)]
-#![feature(inline_const)]
-#![feature(const_mut_refs)]
 
 pub mod time_driver;
-pub use embassy_hal_internal::{into_ref, Peripheral, PeripheralRef};
+pub use embassy_hal_internal::{Peri, PeripheralType};
 
 pub mod bootloader;
 pub mod ccm;

@@ -1,4 +1,4 @@
-pub use embassy_hal_internal::{into_ref, Peripheral, PeripheralRef};
+pub use embassy_hal_internal::{Peri, PeripheralType};
 pub use imxrt1011_pac as pac;
 
 //
